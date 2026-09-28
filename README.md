@@ -99,6 +99,64 @@ Use the version helper when changing desktop release versions:
 ./scripts/set-version.sh --show
 ```
 
+## Anime filler/recap support (this fork)
+
+This fork (`feature/tenrai-filler-skip`) adds native anime episode metadata support on
+Nuvio Desktop, powered by [Tenrai](https://api.tenrai.org/v1) (a Jikan v4-compatible API).
+
+**Data provider:** Tenrai. Base URL: `https://api.tenrai.org/v1`. No API key is required.
+
+**Anime detection:** a show/movie is only treated as a filler/recap candidate when its
+TMDB metadata has BOTH the "Animation" genre AND a Japanese origin signal
+(`original_language == "ja"` or origin country `JP`). See `AnimeDetector`.
+
+**MAL resolution:** `TenraiAnimeIdResolver` searches Tenrai's own `/anime?q=` endpoint
+(no hardcoded anime database) using the show's title, and scores candidates by
+normalized title similarity plus year/media-type/episode-count tie-breakers. A match
+below a confidence threshold is treated as unresolved rather than risking an incorrect
+match (e.g. "Naruto" is never confused with "Naruto Shippuden" or "Boruto"). See
+`AnimeIdResolver.kt`.
+
+**Episode classification:** `TenraiEpisodeProvider` fetches all pages from
+`/anime/{malId}/episodes`, classifying each episode as `NORMAL`, `FILLER`, `RECAP`, or
+`UNKNOWN`. If an episode is ever reported as both filler and recap, `RECAP` wins.
+
+**Caching:** `AnimeEpisodeClassificationRepository` caches MAL id resolution (14 days)
+and episode classifications (30 days) to disk under the app's data directory, with an
+in-memory hot cache and request de-duplication on top. Tenrai being offline never
+prevents an episode list from loading or an episode from playing - a failed request
+falls back to any cached data, and otherwise the app behaves exactly as it did before
+this feature existed.
+
+**Settings:** Settings -> Playback -> Anime exposes independent "Filler episodes" and
+"Recap episodes" controls, each with `Show and label` (default) / `Automatically skip` /
+`Hide from episode list`. Automatic skip only affects automatic next-episode/autoplay
+selection (`AnimeEpisodeSkipResolver`) - manually selecting a specific filler/recap
+episode from the episode list always plays it. Skipped episodes are never marked
+watched and never reported to Trakt/Simkl.
+
+**Known limitations:**
+- Episode classification is only applied when a show is represented as a single season
+  in Nuvio's metadata (the common case for long-running shonen like Naruto/Naruto
+  Shippuden, where MAL episode N == Nuvio episode N). If a show has more than one real
+  season, classifications are intentionally dropped rather than risk mislabeling
+  episodes across a season boundary.
+- A couple of secondary/compact episode-row entry points do not yet show filler/recap
+  badges or apply the "hide" filter (only the main details-screen episode list does).
+
+**Development-only MAL id override:** set the `NUVIO_TENRAI_DEBUG_MAL_ID` environment
+variable to force the MAL id used for the current anime candidate, bypassing title
+matching - useful for testing classification independently of resolution accuracy.
+Unset by default; never set it for a release build. Useful ids for manual testing:
+Naruto = `20`, Naruto Shippuden = `1735`, Cowboy Bebop = `1` (Naruto/Shippuden contain
+filler episodes and are the best titles for testing filler-skip behavior).
+
+**Manual test:** open Naruto or Naruto Shippuden, open its episode list, wait briefly
+for badges to appear (FILLER/RECAP), then in Settings -> Playback -> Anime set filler
+handling to "Automatically skip" and use Next Episode/autoplay near a run of filler
+episodes to confirm it jumps to the next normal episode with a toast, while a manual
+click on a filler episode still plays it directly.
+
 ## Legal & DMCA
 
 Nuvio functions solely as a client-side interface for browsing metadata and playing media provided by user-installed extensions and/or user-provided sources. It is intended for content the user owns or is otherwise authorized to access.
