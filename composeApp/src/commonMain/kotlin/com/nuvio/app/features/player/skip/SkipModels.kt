@@ -21,6 +21,9 @@ data class NextEpisodeInfo(
     val hasAired: Boolean,
     val isWatched: Boolean,
     val unairedMessage: String?,
+    // Filler/recap episodes walked past to reach this one (see AnimeEpisodeSkipResolver).
+    val skippedFillerCount: Int = 0,
+    val skippedRecapCount: Int = 0,
 )
 
 enum class NextEpisodeThresholdMode {

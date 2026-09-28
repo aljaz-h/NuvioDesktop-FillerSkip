@@ -23,6 +23,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.player_anime_skip_toast_filler
+import nuvio.composeapp.generated.resources.player_anime_skip_toast_mixed
+import nuvio.composeapp.generated.resources.player_anime_skip_toast_playing
+import nuvio.composeapp.generated.resources.player_anime_skip_toast_recap
+import org.jetbrains.compose.resources.getString
 
 internal fun PlayerScreenRuntime.isAtNextEpisodeThreshold(): Boolean {
     if (playbackSnapshotKey != activePlaybackKey || playbackSnapshot.isLoading ||
@@ -67,6 +73,21 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     val nextVideoId = nextEpisodeInfo?.videoId ?: return null
     val nextVideo = allEpisodes.firstOrNull { video -> video.id == nextVideoId } ?: return null
     if (nextEpisodeInfo.hasAired != true) return null
+
+    val fillerSkipped = nextEpisodeInfo.skippedFillerCount
+    val recapSkipped = nextEpisodeInfo.skippedRecapCount
+    if (fillerSkipped > 0 || recapSkipped > 0) {
+        launch {
+            val summary = when {
+                fillerSkipped > 0 && recapSkipped > 0 ->
+                    getString(Res.string.player_anime_skip_toast_mixed, fillerSkipped + recapSkipped)
+                fillerSkipped > 0 -> getString(Res.string.player_anime_skip_toast_filler, fillerSkipped)
+                else -> getString(Res.string.player_anime_skip_toast_recap, recapSkipped)
+            }
+            val playing = getString(Res.string.player_anime_skip_toast_playing, nextVideo.title)
+            NuvioToastController.show("$summary\n$playing")
+        }
+    }
 
     val downloadedNextEpisode = DownloadsRepository.findPlayableDownload(
         parentMetaId = parentMetaId,

@@ -13,7 +13,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.nuvio.app.features.anime.AnimeEpisodeClassificationRepository
+import com.nuvio.app.features.anime.AnimeEpisodeSkipResolver
+import com.nuvio.app.features.anime.safeAnimeEpisodeClassifications
 import com.nuvio.app.features.details.MetaDetailsRepository
+import com.nuvio.app.features.settings.AnimeSettingsRepository
 import com.nuvio.app.features.p2p.P2pSettingsRepository
 import com.nuvio.app.features.p2p.P2pStreamRequest
 import com.nuvio.app.features.p2p.P2pStreamingEngine
@@ -639,6 +643,18 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
         }
     }
 
+    // Best-effort background warm-up: if the player was opened without visiting the
+    // details screen first (e.g. Continue Watching), classifications may not be cached
+    // yet. This fetches them once (fully async, never blocks playback) so the next-episode
+    // effect below can pick them up on its next run via animeClassificationsVersion.
+    var animeClassificationsVersion by remember { mutableStateOf(0) }
+    LaunchedEffect(playerMeta?.id) {
+        val meta = playerMeta ?: return@LaunchedEffect
+        if (AnimeEpisodeClassificationRepository.peekClassifications(meta).isNotEmpty()) return@LaunchedEffect
+        AnimeEpisodeClassificationRepository.getClassifications(meta)
+        animeClassificationsVersion += 1
+    }
+
     LaunchedEffect(
         playerMetaVideos,
         shuffleSettings,
@@ -648,6 +664,7 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
         activeEpisodeNumber,
         watchProgressUiState.entries,
         watchedUiState.watchedKeys,
+        animeClassificationsVersion,
     ) {
         if (!isSeries || playerMetaVideos.isEmpty()) {
             nextEpisodeInfo = null
@@ -655,6 +672,8 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
         }
         val curSeason = activeSeasonNumber ?: return@LaunchedEffect
         val curEpisode = activeEpisodeNumber ?: return@LaunchedEffect
+        var skippedFillerCount = 0
+        var skippedRecapCount = 0
         val nextVideo = if (shuffleSettings.enabled) {
             EpisodeShuffleRepository.shuffle.select(
                 profileId, parentMetaId, playerMetaVideos, shuffleSettings.includeWatched,
@@ -664,11 +683,24 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
             )
         } else {
             EpisodeShuffleRepository.shuffle.clearSelection(profileId, parentMetaId, ShuffleSurface.PLAYBACK)
-            PlayerNextEpisodeRules.resolveNextEpisode(
-                videos = playerMetaVideos,
+            val animeMeta = playerMeta
+            AnimeSettingsRepository.ensureLoaded()
+            val animeSettings = AnimeSettingsRepository.uiState.value
+            val classifications = animeMeta
+                ?.let { AnimeEpisodeClassificationRepository.peekClassifications(it) }
+                ?.let { animeMeta.safeAnimeEpisodeClassifications(it) }
+                ?: emptyMap()
+            val skipResult = AnimeEpisodeSkipResolver.findNextPlayableEpisode(
                 currentSeason = curSeason,
                 currentEpisode = curEpisode,
+                videos = playerMetaVideos,
+                classifications = classifications,
+                fillerHandling = animeSettings.fillerHandling,
+                recapHandling = animeSettings.recapHandling,
             )
+            skippedFillerCount = skipResult.skippedFillerCount
+            skippedRecapCount = skipResult.skippedRecapCount
+            skipResult.nextEpisode
         }
         val nextSeason = nextVideo?.season
         val nextEpisode = nextVideo?.episode
@@ -703,6 +735,8 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
                 unairedMessage = if (!PlayerNextEpisodeRules.hasEpisodeAired(nextVideo.released)) {
                     "$airsPrefix ${nextVideo.released ?: tbaLabel}"
                 } else null,
+                skippedFillerCount = skippedFillerCount,
+                skippedRecapCount = skippedRecapCount,
             )
         } else null
     }
