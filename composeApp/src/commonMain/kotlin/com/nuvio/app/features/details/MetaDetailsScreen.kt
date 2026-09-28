@@ -101,6 +101,10 @@ import com.nuvio.app.core.ui.nuvioSafeBottomPadding
 import com.nuvio.app.core.ui.rememberHeroStretchState
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import com.nuvio.app.features.anime.AnimeEpisodeClassificationRepository
+import com.nuvio.app.features.anime.AnimeEpisodeType
+import com.nuvio.app.features.anime.animeEpisodeClassificationsBySeasonEpisode
+import com.nuvio.app.features.anime.safeAnimeEpisodeClassifications
 import com.nuvio.app.features.details.components.DetailActionButtons
 import com.nuvio.app.features.details.components.DetailSecondaryAction
 import com.nuvio.app.features.details.components.CommentDetailSheet
@@ -294,6 +298,9 @@ fun MetaDetailsScreen(
     }
     val trackingListsUpdateFailedMessage = stringResource(Res.string.tracking_lists_update_failed)
     var episodeImdbRatings by remember(type, id) { mutableStateOf<Map<Pair<Int, Int>, Double>>(emptyMap()) }
+    var animeEpisodeClassifications by remember(type, id) {
+        mutableStateOf<Map<Pair<Int, Int>, AnimeEpisodeType>>(emptyMap())
+    }
     var deferredMetaWorkAllowed by remember(type, id) { mutableStateOf(false) }
 
     LaunchedEffect(
@@ -417,6 +424,21 @@ fun MetaDetailsScreen(
             imdbId = imdbId,
             tmdbId = tmdbId,
         )
+    }
+
+    LaunchedEffect(
+        displayedMeta?.id,
+        displayedMeta?.videos,
+        deferredMetaWorkAllowed,
+    ) {
+        val metaForAnime = displayedMeta
+        if (!deferredMetaWorkAllowed || metaForAnime == null) {
+            animeEpisodeClassifications = emptyMap()
+            return@LaunchedEffect
+        }
+        val byEpisodeNumber = AnimeEpisodeClassificationRepository.getClassifications(metaForAnime)
+        val safeByEpisodeNumber = metaForAnime.safeAnimeEpisodeClassifications(byEpisodeNumber)
+        animeEpisodeClassifications = metaForAnime.animeEpisodeClassificationsBySeasonEpisode(safeByEpisodeNumber)
     }
 
     LaunchedEffect(type, id, displayedMeta, uiState.isLoading, autoLoadAttempted) {
@@ -1326,6 +1348,7 @@ fun MetaDetailsScreen(
                                     commentsPageCount = commentsPageCount,
                                     commentsError = commentsError,
                                     episodeImdbRatings = episodeImdbRatings,
+                                    animeEpisodeClassifications = animeEpisodeClassifications,
                                     episodeListGroupedEpisodes = episodeListGroupedEpisodes,
                                     episodeListSeasons = episodeListSeasons,
                                     episodeListCurrentSeason = currentEpisodeListSeason,
@@ -1457,6 +1480,7 @@ fun MetaDetailsScreen(
                                     commentsPageCount = commentsPageCount,
                                     commentsError = commentsError,
                                     episodeImdbRatings = episodeImdbRatings,
+                                    animeEpisodeClassifications = animeEpisodeClassifications,
                                     episodeListGroupedEpisodes = episodeListGroupedEpisodes,
                                     episodeListSeasons = episodeListSeasons,
                                     episodeListCurrentSeason = currentEpisodeListSeason,
@@ -2152,6 +2176,7 @@ private fun LazyListScope.configuredMetaSectionItems(
     commentsPageCount: Int,
     commentsError: String?,
     episodeImdbRatings: Map<Pair<Int, Int>, Double>,
+    animeEpisodeClassifications: Map<Pair<Int, Int>, AnimeEpisodeType>,
     episodeListGroupedEpisodes: Map<Int, List<MetaVideo>>,
     episodeListSeasons: List<Int>,
     episodeListCurrentSeason: Int?,
@@ -2237,6 +2262,7 @@ private fun LazyListScope.configuredMetaSectionItems(
                     commentsPageCount = commentsPageCount,
                     commentsError = commentsError,
                     episodeImdbRatings = episodeImdbRatings,
+                    animeEpisodeClassifications = animeEpisodeClassifications,
                     onRetryComments = onRetryComments,
                     onLoadMoreComments = onLoadMoreComments,
                     onCommentClick = onCommentClick,
@@ -2466,6 +2492,7 @@ private fun ConfiguredMetaSections(
     commentsPageCount: Int,
     commentsError: String?,
     episodeImdbRatings: Map<Pair<Int, Int>, Double>,
+    animeEpisodeClassifications: Map<Pair<Int, Int>, AnimeEpisodeType>,
     onRetryComments: () -> Unit,
     onLoadMoreComments: () -> Unit,
     onCommentClick: (TraktCommentReview) -> Unit,
@@ -2617,6 +2644,7 @@ private fun ConfiguredMetaSections(
                         episodeRatings = episodeImdbRatings,
                         episodeRatingsVisibility = settings.episodeRatingsVisibility,
                         blurUnwatchedEpisodes = blurUnwatchedEpisodes,
+                        animeClassifications = animeEpisodeClassifications,
                         onEpisodeClick = onEpisodeClick,
                         onEpisodeLongPress = onEpisodeLongPress,
                         onSeasonLongPress = onSeasonLongPress,

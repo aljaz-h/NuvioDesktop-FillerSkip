@@ -59,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.NuvioAsyncImage as AsyncImage
 import co.touchlab.kermit.Logger
 import com.nuvio.app.core.build.AppFeaturePolicy
@@ -72,6 +73,7 @@ import com.nuvio.app.core.ui.nuvioDesktopDragScroll
 import com.nuvio.app.core.ui.nuvioHorizontalScrollBleed
 import com.nuvio.app.core.ui.posterCardClickable
 import com.nuvio.app.core.ui.secondaryClick
+import com.nuvio.app.features.anime.AnimeEpisodeType
 import com.nuvio.app.features.details.MetaDetails
 import com.nuvio.app.isDesktop
 import com.nuvio.app.features.details.EpisodeRatingsVisibility
@@ -83,6 +85,8 @@ import com.nuvio.app.features.details.formatRuntimeFromMinutes
 import com.nuvio.app.features.details.groupedEpisodesForDisplay
 import com.nuvio.app.features.details.preferredEpisodeNumberForSeason
 import com.nuvio.app.features.details.seasonSortKey
+import com.nuvio.app.features.settings.AnimeSettingsRepository
+import com.nuvio.app.features.settings.EpisodeHandlingMode
 import com.nuvio.app.features.watchprogress.WatchProgressEntry
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
 import com.nuvio.app.features.watching.application.WatchingState
@@ -110,6 +114,7 @@ fun DetailSeriesContent(
     episodeRatings: Map<Pair<Int, Int>, Double> = emptyMap(),
     episodeRatingsVisibility: EpisodeRatingsVisibility = EpisodeRatingsVisibility.SHOW_ALL,
     blurUnwatchedEpisodes: Boolean = false,
+    animeClassifications: Map<Pair<Int, Int>, AnimeEpisodeType> = emptyMap(),
     onEpisodeClick: ((MetaVideo) -> Unit)? = null,
     onEpisodeLongPress: ((MetaVideo) -> Unit)? = null,
     onSeasonLongPress: ((Int) -> Unit)? = null,
@@ -145,6 +150,31 @@ fun DetailSeriesContent(
             log.w { "All videos lack season/episode fields! First: ${meta.videos.first()}" }
         }
         meta.groupedEpisodesForDisplay()
+    }
+
+    val animeSettings by remember {
+        AnimeSettingsRepository.ensureLoaded()
+        AnimeSettingsRepository.uiState
+    }.collectAsStateWithLifecycle()
+
+    // Episodes hidden via the "Hide from episode list" filler/recap setting are removed
+    // here only (not from underlying metadata/watch state, and not from `groupedEpisodes`
+    // itself so season selection/counts stay stable).
+    val visibleGroupedEpisodes = remember(groupedEpisodes, animeClassifications, animeSettings) {
+        if (animeClassifications.isEmpty()) {
+            groupedEpisodes
+        } else {
+            groupedEpisodes.mapValues { (_, episodes) ->
+                episodes.filterNot { episode ->
+                    val key = episode.season?.let { season -> episode.episode?.let { ep -> season to ep } }
+                    when (key?.let(animeClassifications::get)) {
+                        AnimeEpisodeType.FILLER -> animeSettings.fillerHandling == EpisodeHandlingMode.HIDE
+                        AnimeEpisodeType.RECAP -> animeSettings.recapHandling == EpisodeHandlingMode.HIDE
+                        else -> false
+                    }
+                }
+            }
+        }
     }
 
     if (groupedEpisodes.isEmpty()) {
@@ -216,7 +246,7 @@ fun DetailSeriesContent(
                             },
                         )
                     }
-                    val seasonEpisodes = groupedEpisodes.getValue(seasonForContent)
+                    val seasonEpisodes = visibleGroupedEpisodes[seasonForContent].orEmpty()
                     if (episodeCardStyle == MetaEpisodeCardStyle.Horizontal) {
                         EpisodeHorizontalRow(
                             episodes = seasonEpisodes,
@@ -230,6 +260,7 @@ fun DetailSeriesContent(
                             episodeRatings = episodeRatings,
                             episodeRatingsVisibility = episodeRatingsVisibility,
                             blurUnwatchedEpisodes = blurUnwatchedEpisodes,
+                            animeClassifications = animeClassifications,
                             preferredEpisodeNumber = preferredEpisodeNumberForSeason(
                                 displayedSeasonNumber = seasonForContent,
                                 preferredSeasonNumber = preferredSeasonNumber,
@@ -263,6 +294,7 @@ fun DetailSeriesContent(
                                         ),
                                     episodeRatingsVisibility = episodeRatingsVisibility,
                                     blurUnwatchedEpisodes = blurUnwatchedEpisodes,
+                                    animeType = episode.seasonEpisodeKey()?.let { animeClassifications[it] },
                                     sizing = sizing,
                                     onClick = { onEpisodeClick?.invoke(episode) },
                                     onLongPress = { onEpisodeLongPress?.invoke(episode) },
@@ -716,6 +748,7 @@ private fun EpisodeHorizontalRow(
     episodeRatings: Map<Pair<Int, Int>, Double>,
     episodeRatingsVisibility: EpisodeRatingsVisibility,
     blurUnwatchedEpisodes: Boolean,
+    animeClassifications: Map<Pair<Int, Int>, AnimeEpisodeType> = emptyMap(),
     preferredEpisodeNumber: Int? = null,
     onEpisodeClick: ((MetaVideo) -> Unit)?,
     onEpisodeLongPress: ((MetaVideo) -> Unit)?,
@@ -776,6 +809,7 @@ private fun EpisodeHorizontalRow(
                     ),
                 episodeRatingsVisibility = episodeRatingsVisibility,
                 blurUnwatchedEpisodes = blurUnwatchedEpisodes,
+                animeType = episode.seasonEpisodeKey()?.let { animeClassifications[it] },
                 metrics = rowMetrics,
                 onClick = { onEpisodeClick?.invoke(episode) },
                 onLongPress = { onEpisodeLongPress?.invoke(episode) },
@@ -794,6 +828,7 @@ private fun EpisodeHorizontalCard(
     isWatched: Boolean,
     episodeRatingsVisibility: EpisodeRatingsVisibility,
     blurUnwatchedEpisodes: Boolean,
+    animeType: AnimeEpisodeType? = null,
     metrics: EpisodeHorizontalCardMetrics,
     onClick: (() -> Unit)? = null,
     onLongPress: (() -> Unit)? = null,
@@ -879,14 +914,26 @@ private fun EpisodeHorizontalCard(
                 ),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            EpisodeCodeBadge(
-                text = video.episodeBadge(),
-                textSize = metrics.badgeTextSize,
-                radius = metrics.badgeRadius,
-                horizontalPadding = metrics.badgeHorizontalPadding,
-                verticalPadding = metrics.badgeVerticalPadding,
-                backgroundAlpha = 0.42f,
-            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                EpisodeCodeBadge(
+                    text = video.episodeBadge(),
+                    textSize = metrics.badgeTextSize,
+                    radius = metrics.badgeRadius,
+                    horizontalPadding = metrics.badgeHorizontalPadding,
+                    verticalPadding = metrics.badgeVerticalPadding,
+                    backgroundAlpha = 0.42f,
+                )
+                AnimeEpisodeTypeBadge(
+                    type = animeType,
+                    textSize = metrics.badgeTextSize,
+                    radius = metrics.badgeRadius,
+                    horizontalPadding = metrics.badgeHorizontalPadding,
+                    verticalPadding = metrics.badgeVerticalPadding,
+                )
+            }
 
             Text(
                 text = video.title,
@@ -1126,6 +1173,40 @@ private fun EpisodeCodeBadge(
     }
 }
 
+/** Small colored pill for FILLER/RECAP episodes. Renders nothing for NORMAL/UNKNOWN/null. */
+@Composable
+private fun AnimeEpisodeTypeBadge(
+    type: AnimeEpisodeType?,
+    textSize: androidx.compose.ui.unit.TextUnit,
+    radius: Dp,
+    horizontalPadding: Dp,
+    verticalPadding: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val (label, color) = when (type) {
+        AnimeEpisodeType.FILLER -> stringResource(Res.string.episode_badge_filler) to Color(0xFFE0A030)
+        AnimeEpisodeType.RECAP -> stringResource(Res.string.episode_badge_recap) to Color(0xFF6E8FE0)
+        AnimeEpisodeType.NORMAL, AnimeEpisodeType.UNKNOWN, null -> return
+    }
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(radius))
+            .background(color.copy(alpha = 0.85f))
+            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontSize = textSize,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.4.sp,
+            ),
+            color = Color.White,
+            maxLines = 1,
+        )
+    }
+}
+
 @Composable
 private fun ImdbEpisodeRatingBadge(
     rating: String,
@@ -1181,6 +1262,7 @@ private fun EpisodeListCard(
     episodeRatingsVisibility: EpisodeRatingsVisibility,
     blurUnwatchedEpisodes: Boolean,
     sizing: SeriesContentSizing,
+    animeType: AnimeEpisodeType? = null,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     onLongPress: (() -> Unit)? = null,
@@ -1284,11 +1366,18 @@ private fun EpisodeListCard(
                     overflow = TextOverflow.Ellipsis,
                 )
 
-                if (formattedDate != null || ratingLabel != null) {
+                if (formattedDate != null || ratingLabel != null || animeType != null) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        AnimeEpisodeTypeBadge(
+                            type = animeType,
+                            textSize = sizing.metaTextSize,
+                            radius = sizing.badgeRadius,
+                            horizontalPadding = sizing.badgeHorizontalPadding,
+                            verticalPadding = sizing.badgeVerticalPadding / 2,
+                        )
                         formattedDate?.let { date ->
                             Text(
                                 text = date,
