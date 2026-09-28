@@ -1152,6 +1152,55 @@ private fun PlaybackSettingsSection(
             }
         }
 
+        val animeSettings by remember {
+            AnimeSettingsRepository.ensureLoaded()
+            AnimeSettingsRepository.uiState
+        }.collectAsStateWithLifecycle()
+        SettingsSection(
+            title = stringResource(Res.string.settings_playback_section_anime),
+            isTablet = isTablet,
+        ) {
+            SettingsGroup(isTablet = isTablet) {
+                var showFillerHandlingDialog by remember { mutableStateOf(false) }
+                SettingsNavigationRow(
+                    title = stringResource(Res.string.settings_anime_filler_row_title),
+                    description = stringResource(animeSettings.fillerHandling.labelRes),
+                    isTablet = isTablet,
+                    onClick = { showFillerHandlingDialog = true },
+                )
+                if (showFillerHandlingDialog) {
+                    EpisodeHandlingModeDialog(
+                        title = stringResource(Res.string.settings_anime_filler_row_title),
+                        selected = animeSettings.fillerHandling,
+                        onSelect = {
+                            AnimeSettingsRepository.setFillerHandling(it)
+                            showFillerHandlingDialog = false
+                        },
+                        onDismiss = { showFillerHandlingDialog = false },
+                    )
+                }
+                SettingsGroupDivider(isTablet = isTablet)
+                var showRecapHandlingDialog by remember { mutableStateOf(false) }
+                SettingsNavigationRow(
+                    title = stringResource(Res.string.settings_anime_recap_row_title),
+                    description = stringResource(animeSettings.recapHandling.labelRes),
+                    isTablet = isTablet,
+                    onClick = { showRecapHandlingDialog = true },
+                )
+                if (showRecapHandlingDialog) {
+                    EpisodeHandlingModeDialog(
+                        title = stringResource(Res.string.settings_anime_recap_row_title),
+                        selected = animeSettings.recapHandling,
+                        onSelect = {
+                            AnimeSettingsRepository.setRecapHandling(it)
+                            showRecapHandlingDialog = false
+                        },
+                        onDismiss = { showRecapHandlingDialog = false },
+                    )
+                }
+            }
+        }
+
         SettingsSection(
             title = stringResource(Res.string.settings_playback_section_next_episode),
             isTablet = isTablet,
@@ -2646,6 +2695,42 @@ private fun NextEpisodeThresholdModeDialog(
         }
     }
 }
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun EpisodeHandlingModeDialog(
+    title: String,
+    selected: EpisodeHandlingMode,
+    onSelect: (EpisodeHandlingMode) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    DialogSurface(
+        onDismissRequest = onDismiss,
+        title = title,
+    ) {
+        EpisodeHandlingMode.entries.forEach { mode ->
+            DialogOption(
+                text = stringResource(mode.labelRes),
+                selected = mode == selected,
+                onClick = { onSelect(mode) },
+            )
+        }
+
+        DialogButtons {
+            DialogButton(
+                text = stringResource(Res.string.action_done),
+                onClick = onDismiss,
+            )
+        }
+    }
+}
+
+private val EpisodeHandlingMode.labelRes: StringResource
+    get() = when (this) {
+        EpisodeHandlingMode.SHOW -> Res.string.settings_anime_mode_show
+        EpisodeHandlingMode.SKIP -> Res.string.settings_anime_mode_skip
+        EpisodeHandlingMode.HIDE -> Res.string.settings_anime_mode_hide
+    }
 
 private fun decoderPriorityRes(priority: Int): StringResource = when (priority) {
     0 -> Res.string.settings_playback_decoder_device_only
