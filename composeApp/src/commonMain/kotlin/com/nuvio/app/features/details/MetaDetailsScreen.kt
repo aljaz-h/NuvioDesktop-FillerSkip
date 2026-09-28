@@ -105,6 +105,8 @@ import com.nuvio.app.features.anime.AnimeEpisodeClassificationRepository
 import com.nuvio.app.features.anime.AnimeEpisodeType
 import com.nuvio.app.features.anime.animeEpisodeClassificationsBySeasonEpisode
 import com.nuvio.app.features.anime.safeAnimeEpisodeClassifications
+import com.nuvio.app.features.settings.AnimeSettingsRepository
+import com.nuvio.app.features.settings.EpisodeHandlingMode
 import com.nuvio.app.features.details.components.DetailActionButtons
 import com.nuvio.app.features.details.components.DetailSecondaryAction
 import com.nuvio.app.features.details.components.CommentDetailSheet
@@ -301,6 +303,10 @@ fun MetaDetailsScreen(
     var animeEpisodeClassifications by remember(type, id) {
         mutableStateOf<Map<Pair<Int, Int>, AnimeEpisodeType>>(emptyMap())
     }
+    val animeSettingsUiState by remember {
+        AnimeSettingsRepository.ensureLoaded()
+        AnimeSettingsRepository.uiState
+    }.collectAsStateWithLifecycle()
     var deferredMetaWorkAllowed by remember(type, id) { mutableStateOf(false) }
 
     LaunchedEffect(
@@ -1349,6 +1355,8 @@ fun MetaDetailsScreen(
                                     commentsError = commentsError,
                                     episodeImdbRatings = episodeImdbRatings,
                                     animeEpisodeClassifications = animeEpisodeClassifications,
+                                    animeFillerHandling = animeSettingsUiState.fillerHandling,
+                                    animeRecapHandling = animeSettingsUiState.recapHandling,
                                     episodeListGroupedEpisodes = episodeListGroupedEpisodes,
                                     episodeListSeasons = episodeListSeasons,
                                     episodeListCurrentSeason = currentEpisodeListSeason,
@@ -1481,6 +1489,8 @@ fun MetaDetailsScreen(
                                     commentsError = commentsError,
                                     episodeImdbRatings = episodeImdbRatings,
                                     animeEpisodeClassifications = animeEpisodeClassifications,
+                                    animeFillerHandling = animeSettingsUiState.fillerHandling,
+                                    animeRecapHandling = animeSettingsUiState.recapHandling,
                                     episodeListGroupedEpisodes = episodeListGroupedEpisodes,
                                     episodeListSeasons = episodeListSeasons,
                                     episodeListCurrentSeason = currentEpisodeListSeason,
@@ -2177,6 +2187,8 @@ private fun LazyListScope.configuredMetaSectionItems(
     commentsError: String?,
     episodeImdbRatings: Map<Pair<Int, Int>, Double>,
     animeEpisodeClassifications: Map<Pair<Int, Int>, AnimeEpisodeType>,
+    animeFillerHandling: EpisodeHandlingMode,
+    animeRecapHandling: EpisodeHandlingMode,
     episodeListGroupedEpisodes: Map<Int, List<MetaVideo>>,
     episodeListSeasons: List<Int>,
     episodeListCurrentSeason: Int?,
@@ -2286,7 +2298,22 @@ private fun LazyListScope.configuredMetaSectionItems(
 
     fun addLazyEpisodeListItems(key: String) {
         val currentSeason = episodeListCurrentSeason ?: return
-        val episodes = episodeListGroupedEpisodes[currentSeason].orEmpty()
+        val allEpisodes = episodeListGroupedEpisodes[currentSeason].orEmpty()
+        // Episodes hidden via the "Hide from episode list" filler/recap setting are removed
+        // here only (not from underlying metadata/watch state, and not from
+        // episodeListGroupedEpisodes itself so the season selector stays stable).
+        val episodes = if (animeEpisodeClassifications.isEmpty()) {
+            allEpisodes
+        } else {
+            allEpisodes.filterNot { episode ->
+                val key = episode.season?.let { season -> episode.episode?.let { ep -> season to ep } }
+                when (key?.let(animeEpisodeClassifications::get)) {
+                    AnimeEpisodeType.FILLER -> animeFillerHandling == EpisodeHandlingMode.HIDE
+                    AnimeEpisodeType.RECAP -> animeRecapHandling == EpisodeHandlingMode.HIDE
+                    else -> false
+                }
+            }
+        }
         if (episodes.isEmpty()) return
 
         item(
@@ -2329,6 +2356,7 @@ private fun LazyListScope.configuredMetaSectionItems(
                     episodeRatings = episodeImdbRatings,
                     episodeRatingsVisibility = settings.episodeRatingsVisibility,
                     blurUnwatchedEpisodes = blurUnwatchedEpisodes,
+                    animeClassifications = animeEpisodeClassifications,
                     onEpisodeClick = onEpisodeClick,
                     onEpisodeLongPress = onEpisodeLongPress,
                 )
