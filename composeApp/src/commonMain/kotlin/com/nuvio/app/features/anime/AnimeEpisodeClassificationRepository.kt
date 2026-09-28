@@ -29,8 +29,8 @@ object AnimeEpisodeClassificationRepository {
 
     // In-memory hot caches mirroring the on-disk cache, keyed by resolutionKey() / malId.
     private val resolutionCache = HashMap<String, Int?>()
-    private val episodeCache = HashMap<Int, Map<Int, AnimeEpisodeType>>()
-    private val inFlight = HashMap<String, CompletableDeferred<Map<Int, AnimeEpisodeType>>>()
+    private val episodeCache = HashMap<Int, List<AnimeEpisodeMetadata>>()
+    private val inFlight = HashMap<String, CompletableDeferred<List<AnimeEpisodeMetadata>>>()
 
     private const val RESOLUTION_TTL_MS = 14L * 24 * 60 * 60 * 1000L // 14 days
     private const val EPISODES_TTL_MS = 30L * 24 * 60 * 60 * 1000L // 30 days
@@ -38,27 +38,31 @@ object AnimeEpisodeClassificationRepository {
     /**
      * Returns whatever classification data is already known in-memory, without ever
      * triggering network I/O. Safe to call from hot paths (e.g. next-episode resolution)
-     * that must not be blocked by a Tenrai request.
+     * that must not be blocked by a Tenrai request. Raw Tenrai episode metadata (episode
+     * number, type, aired date) - use [MetaDetails.matchAnimeEpisodeClassifications] (or
+     * the equivalent single-season-safe number mapping) to line these up with Nuvio's own
+     * episode identity.
      */
-    fun peekClassifications(meta: MetaDetails): Map<Int, AnimeEpisodeType> {
-        val malId = resolutionCache[resolutionKey(meta)] ?: return emptyMap()
-        return episodeCache[malId] ?: emptyMap()
+    fun peekClassifications(meta: MetaDetails): List<AnimeEpisodeMetadata> {
+        val malId = resolutionCache[resolutionKey(meta)] ?: return emptyList()
+        return episodeCache[malId] ?: emptyList()
     }
 
     /**
-     * Resolves (detector -> resolver -> provider, all cached) and returns the episode
-     * classifications for [meta]. Intended to be called from a details-screen load effect;
-     * concurrent calls for the same title are de-duplicated onto a single in-flight request.
+     * Resolves (detector -> resolver -> provider, all cached) and returns the raw Tenrai
+     * episode classifications for [meta]. Intended to be called from a details-screen load
+     * effect; concurrent calls for the same title are de-duplicated onto a single in-flight
+     * request.
      */
-    suspend fun getClassifications(meta: MetaDetails): Map<Int, AnimeEpisodeType> {
-        if (!AnimeDetector.isLikelyAnime(meta)) return emptyMap()
+    suspend fun getClassifications(meta: MetaDetails): List<AnimeEpisodeMetadata> {
+        if (!AnimeDetector.isLikelyAnime(meta)) return emptyList()
         log.d { "[Anime] candidate detected: '${meta.name}'" }
 
         val key = resolutionKey(meta)
         val awaited = mutex.withLock { inFlight[key] }
         if (awaited != null) return awaited.await()
 
-        val deferred = CompletableDeferred<Map<Int, AnimeEpisodeType>>()
+        val deferred = CompletableDeferred<List<AnimeEpisodeMetadata>>()
         val owns = mutex.withLock {
             if (inFlight.containsKey(key)) {
                 false
@@ -68,12 +72,12 @@ object AnimeEpisodeClassificationRepository {
             }
         }
         if (!owns) {
-            return mutex.withLock { inFlight[key] }?.await() ?: emptyMap()
+            return mutex.withLock { inFlight[key] }?.await() ?: emptyList()
         }
 
         return try {
             val malId = resolveMalId(meta, key)
-            val result = if (malId != null) fetchEpisodes(malId) else emptyMap()
+            val result = if (malId != null) fetchEpisodes(malId) else emptyList()
             deferred.complete(result)
             result
         } catch (cancelled: CancellationException) {
@@ -81,8 +85,8 @@ object AnimeEpisodeClassificationRepository {
             throw cancelled
         } catch (e: Exception) {
             log.w { "[Anime] classification pipeline failed for '${meta.name}': ${e.message}" }
-            deferred.complete(emptyMap())
-            emptyMap()
+            deferred.complete(emptyList())
+            emptyList()
         } finally {
             mutex.withLock { inFlight.remove(key) }
         }
@@ -140,16 +144,18 @@ object AnimeEpisodeClassificationRepository {
         return resolution?.malId
     }
 
-    private suspend fun fetchEpisodes(malId: Int): Map<Int, AnimeEpisodeType> {
+    private suspend fun fetchEpisodes(malId: Int): List<AnimeEpisodeMetadata> {
         episodeCache[malId]?.let { return it }
 
         AnimeEpisodeCacheStorage.loadEpisodes(malId)?.let { cachedJson ->
             val cached = runCatching { json.decodeFromString(CachedEpisodes.serializer(), cachedJson) }.getOrNull()
             if (cached != null && !isExpired(cached.cachedAtMs, EPISODES_TTL_MS)) {
                 log.d { "[Anime] using cached episode metadata for malId=$malId" }
-                val map = cached.episodes.associate { it.episodeNumber to parseType(it.type) }
-                episodeCache[malId] = map
-                return map
+                val episodes = cached.episodes.map {
+                    AnimeEpisodeMetadata(it.episodeNumber, parseType(it.type), it.title, it.airedAt)
+                }
+                episodeCache[malId] = episodes
+                return episodes
             }
         }
 
@@ -162,20 +168,19 @@ object AnimeEpisodeClassificationRepository {
             log.w { "[Anime] Tenrai episode load failed for malId=$malId: ${e.message}" }
             emptyList()
         }
-        if (episodes.isEmpty()) return emptyMap()
+        if (episodes.isEmpty()) return emptyList()
 
         episodes.forEach { episode ->
             log.d { "[Anime] episode ${episode.episodeNumber} classified as ${episode.type}" }
         }
 
-        val map = episodes.associate { it.episodeNumber to it.type }
-        episodeCache[malId] = map
+        episodeCache[malId] = episodes
         val payload = CachedEpisodes(
             episodes = episodes.map { CachedEpisodeEntry(it.episodeNumber, it.type.name, it.title, it.airedAt) },
             cachedAtMs = animeCurrentTimeMs(),
         )
         AnimeEpisodeCacheStorage.saveEpisodes(malId, json.encodeToString(CachedEpisodes.serializer(), payload))
-        return map
+        return episodes
     }
 
     private fun buildResolveQuery(meta: MetaDetails): AnimeResolveQuery? {

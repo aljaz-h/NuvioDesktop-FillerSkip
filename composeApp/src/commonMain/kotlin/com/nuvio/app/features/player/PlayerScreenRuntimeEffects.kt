@@ -15,7 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.nuvio.app.features.anime.AnimeEpisodeClassificationRepository
 import com.nuvio.app.features.anime.AnimeEpisodeSkipResolver
-import com.nuvio.app.features.anime.safeAnimeEpisodeClassifications
+import com.nuvio.app.features.anime.matchAnimeEpisodeClassifications
 import com.nuvio.app.features.details.MetaDetailsRepository
 import com.nuvio.app.features.settings.AnimeSettingsRepository
 import com.nuvio.app.features.p2p.P2pSettingsRepository
@@ -687,8 +687,7 @@ private fun PlayerScreenRuntime.BindPlayerMetadataAndSkipEffects() {
             AnimeSettingsRepository.ensureLoaded()
             val animeSettings = AnimeSettingsRepository.uiState.value
             val classifications = animeMeta
-                ?.let { AnimeEpisodeClassificationRepository.peekClassifications(it) }
-                ?.let { animeMeta.safeAnimeEpisodeClassifications(it) }
+                ?.let { it.matchAnimeEpisodeClassifications(AnimeEpisodeClassificationRepository.peekClassifications(it)) }
                 ?: emptyMap()
             val skipResult = AnimeEpisodeSkipResolver.findNextPlayableEpisode(
                 currentSeason = curSeason,

@@ -25,7 +25,7 @@ object AnimeEpisodeSkipResolver {
         currentSeason: Int,
         currentEpisode: Int,
         videos: List<MetaVideo>,
-        classifications: Map<Int, AnimeEpisodeType>,
+        classifications: Map<Pair<Int, Int>, AnimeEpisodeType>,
         fillerHandling: EpisodeHandlingMode,
         recapHandling: EpisodeHandlingMode,
     ): Result {
@@ -46,7 +46,8 @@ object AnimeEpisodeSkipResolver {
             val candidate = PlayerNextEpisodeRules.resolveNextEpisode(videos, season, episode)
                 ?: return Result(null, skipped, fillerCount, recapCount)
 
-            val type = candidate.episode?.let { classifications[it] } ?: AnimeEpisodeType.UNKNOWN
+            val type = candidate.season?.let { s -> candidate.episode?.let { e -> classifications[s to e] } }
+                ?: AnimeEpisodeType.UNKNOWN
             val shouldSkip = when (type) {
                 AnimeEpisodeType.FILLER -> fillerHandling != EpisodeHandlingMode.SHOW
                 AnimeEpisodeType.RECAP -> recapHandling != EpisodeHandlingMode.SHOW

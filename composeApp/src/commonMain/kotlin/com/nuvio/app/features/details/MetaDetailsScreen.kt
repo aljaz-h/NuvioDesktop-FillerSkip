@@ -103,8 +103,7 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import com.nuvio.app.features.anime.AnimeEpisodeClassificationRepository
 import com.nuvio.app.features.anime.AnimeEpisodeType
-import com.nuvio.app.features.anime.animeEpisodeClassificationsBySeasonEpisode
-import com.nuvio.app.features.anime.safeAnimeEpisodeClassifications
+import com.nuvio.app.features.anime.matchAnimeEpisodeClassifications
 import com.nuvio.app.features.settings.AnimeSettingsRepository
 import com.nuvio.app.features.settings.EpisodeHandlingMode
 import com.nuvio.app.features.details.components.DetailActionButtons
@@ -442,9 +441,8 @@ fun MetaDetailsScreen(
             animeEpisodeClassifications = emptyMap()
             return@LaunchedEffect
         }
-        val byEpisodeNumber = AnimeEpisodeClassificationRepository.getClassifications(metaForAnime)
-        val safeByEpisodeNumber = metaForAnime.safeAnimeEpisodeClassifications(byEpisodeNumber)
-        animeEpisodeClassifications = metaForAnime.animeEpisodeClassificationsBySeasonEpisode(safeByEpisodeNumber)
+        val episodes = AnimeEpisodeClassificationRepository.getClassifications(metaForAnime)
+        animeEpisodeClassifications = metaForAnime.matchAnimeEpisodeClassifications(episodes)
     }
 
     LaunchedEffect(type, id, displayedMeta, uiState.isLoading, autoLoadAttempted) {
